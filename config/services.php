@@ -34,5 +34,7 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
-
+    'whisper'=> [
+        'model_directory' =>app_path('Whisper/Models'),
+    ],
 ];

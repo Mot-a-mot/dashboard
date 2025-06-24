@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthApiController;
 use App\Http\Controllers\Api\AudioAnalysisController;
 use App\Http\Controllers\Api\ExerciceApiController;
+use App\Http\Controllers\API\UserApiController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -38,10 +39,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/analyze', [AudioAnalysisController::class, 'analyze']);
     Route::prefix('exercices')->group(function () {
         Route::get('/', [ExerciceApiController::class, 'index']);
+        Route::post('/analyze', [ExerciceApiController::class, 'analyze']);
         Route::get('/by-niveau', [ExerciceApiController::class, 'byNiveau']);
         Route::get('/{id}', [ExerciceApiController::class, 'show']);
         Route::post('/', [ExerciceApiController::class, 'store']);
         Route::put('/{id}', [ExerciceApiController::class, 'update']);
         Route::delete('/{id}', [ExerciceApiController::class, 'destroy']);
-});
+    });
+    Route::prefix('user')->group(function () {
+        Route::get('/', [UserApiController::class, 'index']);
+        Route::get('/me/niveau', [UserApiController::class, 'getUserLevel']);
+        Route::get('/{id}', [UserApiController::class, 'show']);
+        Route::post('/', [UserApiController::class, 'store']);
+        Route::put('/{id}', [UserApiController::class, 'update']);
+        Route::delete('/{id}', [UserApiController::class, 'destroy']);
+        
+    });
 });
