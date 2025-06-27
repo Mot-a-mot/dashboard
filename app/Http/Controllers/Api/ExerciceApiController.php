@@ -10,7 +10,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Codewithkyrian\Whisper\Whisper;
+use Codewithkyrian\Whisper\WhisperFullParams;
 use App\Jobs\TranscribeProcess;
+use App\Jobs\AnalyzeAudioJob;
+use App\Models\UserExerciseAttempt;
 
 
 
@@ -49,10 +52,30 @@ class ExerciceApiController extends Controller
             return response()->json(['message' => 'Niveau non trouvé.'], 404);
         }
 
+        $user = $request->user(); // Authenticated user
+
         $exercices = Exercice::where('niveau_id', $niveauId)
             ->where('is_active', true)
             ->latest()
-            ->get();
+            ->get()
+            ->map(function ($exercice) use ($user) {
+                // find the latest attempt for this user/exercice
+                $attempt = $exercice->userExerciseAttempts()
+                            ->where('user_id', $user->id)
+                            ->orderByDesc('submitted_at')
+                            ->first();
+
+                return [
+                    'id' => $exercice->id,
+                    'title' => $exercice->title,
+                    'description' => $exercice->description,
+                    'niveau_id' => $exercice->niveau_id,
+                    'is_active' => $exercice->is_active,
+                    'created_at' => $exercice->created_at,
+                    'updated_at' => $exercice->updated_at,
+                    'is_passed' => $attempt?->is_passed ?? false, // status
+                ];
+            });
 
         return response()->json([
             'niveau' => $niveau,
@@ -101,57 +124,115 @@ class ExerciceApiController extends Controller
             'exercice' => $exercice
         ]);
     }
-   public function analyze(Request $request)
+    public function analyze(Request $request)
     {
         $request->validate([
-            // 'audio' => 'required|file|mimetypes:audio/mpeg,audio/wav,audio/x-wav,audio/x-m4a,audio/mp4,audio/aac',
+            'audio' => 'required',
+            'exercice_id' => 'required|exists:exercices,id',
+        ]);
+
+        $file = $request->file('audio');
+        $path = $file->store('audio_uploads');
+
+        $userId     = Auth::id();
+        $exerciceId = $request->exercice_id;
+         // Simple score logic (you can improve this)
+            // similar_text(strtolower($heard), strtolower($expected), $percent);
+            // $score = round($percent, 2);
+            // $level = $score >= 85 ? 'B2' : ($score >= 60 ? 'A2' : 'A1');
+            // $isPassed = $score >= 60;
+        AnalyzeAudioJob::dispatch($path, $userId, $exerciceId);
+
+        return response()->json([
+            'message' => 'Votre audio est en cours de traitement.',
+        ]);
+    }
+
+    public function getResultatAnalyse(Request $request)
+    {
+        $request->validate([
             'exercice_id' => 'required|exists:exercices,id',
         ]);
 
         $user = Auth::user();
-        $file = $request->file('audio');
-        $path = $file->store('audio_uploads');
 
-        // 1️⃣ Get expected text from Exercice
-        $exercice = Exercice::findOrFail($request->exercice_id);
-        $expectedText = $exercice->description;
-        TranscribeProcess::dispatch(Storage::path($path));
-        // 2️⃣ Convert audio to text via speech-to-text API
-        // $audioText = $this->speechToText(Storage::path($path));
+        // on récupère le dernier attempt de CE user sur CE exercice
+        $attempt = UserExerciseAttempt::where('user_id', $user->id)
+            ->where('exercice_id', $request->exercice_id)
+            ->orderByDesc('submitted_at')
+            ->first();
 
-        // 3️⃣ Ask ChatGPT for feedback
-        // $feedback = $this->askChatGPT($audioText, $expectedText);
+        if (!$attempt) {
+            return response()->json([
+                'message' => 'Aucun résultat trouvé'
+            ], 404);
+        }
 
-        // // 4️⃣ Compute similarity score
-        // similar_text(strtolower($audioText), strtolower($expectedText), $percent);
-        // $score = round($percent);
-        // $level = $score >= 90 ? 5 : ($score >= 75 ? 4 : 3);
-        // $isPassed = $score >= 75;
-
-        // // 5️⃣ Save UserExerciseAttempt
-        // $attempt = UserExerciseAttempt::create([
-        //     'user_id'      => $user->id,
-        //     'exercice_id'  => $exercice->id,
-        //     'score'        => $score,
-        //     'is_passed'    => $isPassed,
-        //     'note'         => $feedback,
-        //     'submitted_at' => now(),
-        // ]);
-
-        // // 6️⃣ Return response
-        // return response()->json([
-        //     'transcript'      => $audioText,
-        //     'score'           => $score,
-        //     'level'           => $level,
-        //     'feedbackMessage' => $feedback,
-        //     'attempt_id'      => $attempt->id,
-        // ]);
-        return response()->json([
-            'message' => 'Analyse en cours. Veuillez vérifier plus tard.',
-            // 'audio_text' => $audioText,
-            // 'expected_text' => $expectedText,
-        ]);
+        return response()->json($attempt);
     }
+
+    // public function analyze(Request $request)
+    // {
+    //     try {
+    //         $request->validate([
+    //             'audio' => 'required',
+    //             'exercice_id' => 'required|exists:exercices,id',
+    //         ]);
+
+    //         $file = $request->file('audio');
+    //         $path = $file->store('audio_uploads');
+    //         $absolutePath = Storage::path($path);
+
+    //         // Load expected text from Exercice
+    //         $exercice = Exercice::findOrFail($request->exercice_id);
+    //         $expected = $exercice->content;
+
+    //         // Load Whisper
+    //         putenv('WHISPER_CPP_LIB=' . base_path('vendor/codewithkyrian/whisper.php/lib/windows-x86_64/libwhisper.dll')); // Windows
+    //         $params = \Codewithkyrian\Whisper\WhisperFullParams::default()
+    //             ->withLanguage('fr')
+    //             ->withNThreads(4);
+
+    //         $whisper = \Codewithkyrian\Whisper\Whisper::fromPretrained('tiny');
+    //         $result = $whisper->transcribe($absolutePath, 6);
+    //         $heard = $result[0]->text;
+
+    //         // Ask ChatGPT for feedback
+    //         // $feedback = $this->askChatGPT($heard, $expected);
+    //         $feedback = "Votre prononciation est correcte, mais essayez de mieux articuler les mots 'cheval' et 'herbe'.";
+    //         // Simple score logic (you can improve this)
+    //         // similar_text(strtolower($heard), strtolower($expected), $percent);
+    //         // $score = round($percent, 2);
+    //         // $level = $score >= 85 ? 'B2' : ($score >= 60 ? 'A2' : 'A1');
+    //         // $isPassed = $score >= 60;
+    //         $score = 100; // Simuler un score parfait pour le test
+    //         $level = 'A1'; // Simuler un niveau pour le test
+    //         $isPassed = true; // Simuler un passage pour le test
+    //         // Save attempt
+    //         $attempt = UserExerciseAttempt::create([
+    //             'user_id' => Auth::id(),
+    //             'exercice_id' => $exercice->id,
+    //             'score' => $score,
+    //             'is_passed' => $isPassed,
+    //             'note' => $feedback,
+    //             'submitted_at' => now(),
+    //         ]);
+
+    //         return response()->json([
+    //             'transcript' => $heard,
+    //             'level' => $level,
+    //             'score' => $score,
+    //             'feedbackMessage' => $feedback,
+    //         ]);
+
+    //     } catch (\Throwable $e) {
+    //         return response()->json([
+    //             'error' => 'Une erreur est survenue pendant l\'analyse audio.',
+    //             'message' => $e->getMessage(),
+    //         ], 500);
+    //     }
+    // }
+
     
     
     protected function speechToText(string $filePath): string

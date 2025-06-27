@@ -3,31 +3,88 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Models\Exercice;
+use App\Models\Niveau;
+use App\Models\Transcription;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Http;
+use Codewithkyrian\Whisper\Whisper;
+use Codewithkyrian\Whisper\WhisperFullParams;
+use App\Jobs\TranscribeAudioJob;
 
 class AudioAnalysisController extends Controller
 {
-    public function analyze(Request $request)
+    public function testLevel(Request $request)
     {
-        $request->validate([
-            'audio' => 'required|file|mimes:aac,mp3,wav,m4a',
-            'expectedText' => 'required|string'
-        ]);
+        // try {
+            $request->validate([
+                'audio' => 'required',
+            ]);
 
-        $file = $request->file('audio');
-        $path = $file->store('audio_uploads');
+            $file = $request->file('audio');
+            $path = $file->store('audio_uploads'); // Chemin stocké dans storage/app/…
+            $absolutePath = Storage::path($path);
 
-        // Analyse fictive – à remplacer par un vrai système (ex : Python, API IA, etc.)
-        $score = rand(50, 100); // Score fictif
-        $level = $score >= 90 ? 5 : ($score >= 75 ? 4 : 3);
-        $feedback = "Analyse réussie. Le texte est bien prononcé.";
+            // ✅ Convert AAC to WAV using FFmpeg           <-- gardé comme repère ; exécuté dans le Job
+            // WHISPER transcription                       <-- gardé comme repère ; exécuté dans le Job
+            // GPT feedback                                <-- gardé comme repère ; exécuté dans le Job
+            // Calcul du score (basé sur similarité de texte)
+            // Déduction du niveau
+            // Mise à jour du niveau de l'utilisateur
+
+            // ⏩ On délègue désormais tout ce bloc lourd au Job asynchrone
+            TranscribeAudioJob::dispatch($path, Auth::id());
+
+            return response()->json([
+                'message' => 'Votre audio est en cours de traitement.',
+            ]);
+
+        // } catch (\Throwable $e) {
+        //     return response()->json([
+        //         'error' => 'Erreur lors de l’analyse audio.',
+        //         'message' => $e->getMessage(),
+        //     ], 500);
+        // }
+    }
+
+    public function getResultatTranscription()
+    {
+        $user = Auth::user();
+
+        $data = Transcription::where('user_id', $user->id)->first();
+
+        if (!$data) {
+            return response()->json(['message' => 'Aucun résultat'], 404);
+        }
 
         return response()->json([
-            'level' => $level,
-            'score' => $score,
-            'feedbackMessage' => $feedback,
+            'done' => $data->done,
+            'transcript' => $data->transcript,
+            'score' => $data->score,
+            'level' => $data->level,
+            'feedbackMessage' => $data->feedback,
         ]);
+    }
+
+    protected function askChatGPT(string $heard, string $expected): string
+    {
+        $response = Http::withToken(config('services.openai.key'))
+            ->post('https://api.openai.com/v1/chat/completions', [
+                'model' => 'gpt-4',
+                'messages' => [
+                    ['role' => 'system', 'content' => 'Tu es un correcteur de prononciation en français.'],
+                    ['role' => 'user', 'content' => "Texte attendu : « $expected ».\nTexte prononcé : « $heard ».\nDonne un retour constructif en une phrase."],
+                ],
+                'temperature' => 0.5,
+                'max_tokens' => 60,
+            ]);
+
+        if (!$response->ok()) {
+            throw new \Exception('Erreur GPT-API');
+        }
+
+        return trim($response->json('choices.0.message.content'));
     }
 }

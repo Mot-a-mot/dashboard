@@ -36,10 +36,12 @@ Route::get('/niveaux', [AuthApiController::class, 'niveaux']);
 // ✅ Routes protégées par token
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthApiController::class, 'logout']);
-    Route::post('/analyze', [AudioAnalysisController::class, 'analyze']);
+    Route::post('/testLevel', [AudioAnalysisController::class, 'testLevel']);
+    Route::get('/resultat-transcription', [AudioAnalysisController::class, 'getResultatTranscription']);
     Route::prefix('exercices')->group(function () {
         Route::get('/', [ExerciceApiController::class, 'index']);
         Route::post('/analyze', [ExerciceApiController::class, 'analyze']);
+        Route::get('/getResultatAnalyse', [ExerciceApiController::class, 'getResultatAnalyse']);
         Route::get('/by-niveau', [ExerciceApiController::class, 'byNiveau']);
         Route::get('/{id}', [ExerciceApiController::class, 'show']);
         Route::post('/', [ExerciceApiController::class, 'store']);
